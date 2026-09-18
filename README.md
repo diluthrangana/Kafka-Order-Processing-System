@@ -1,6 +1,6 @@
 # Kafka Order Processing System
 
-A robust, real-time order processing pipeline built with Python and Apache Kafka. This project demonstrates enterprise-grade streaming patterns including Avro serialization, real-time metric aggregation, exponential backoff retries, and Dead Letter Queue (DLQ) management.
+A robust, real-time order processing pipeline built with Python and Apache Kafka. This project demonstrates enterprise-grade streaming patterns including Avro serialization, real-time metric aggregation, exponential backoff retries, and Dead Letter Queue management.
 
 It also includes a beautiful, interactive web dashboard to visualize the pipeline in action.
 
