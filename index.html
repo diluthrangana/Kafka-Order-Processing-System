@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kafka Order Processing System | Real-time Dashboard</title>
+  <meta name="description" content="Real-time Kafka Order Processing Dashboard with Avro, Running Averages, Retry Logic, and Dead Letter Queue.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg-primary: #090d16;
+      --bg-card: rgba(18, 26, 44, 0.75);
+      --border-card: rgba(255,255,255,0.08);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent-cyan: #06b6d4;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --font-sans: 'Outfit', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg-primary);color:var(--text-main);font-family:var(--font-sans);min-height:100vh;overflow-x:hidden;line-height:1.5}
+
+    .glow-bg{position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:0;
+      background:radial-gradient(circle at 15% 20%,rgba(6,182,212,.12) 0%,transparent 40%),
+                 radial-gradient(circle at 85% 15%,rgba(168,85,247,.12) 0%,transparent 40%),
+                 radial-gradient(circle at 50% 80%,rgba(16,185,129,.08) 0%,transparent 50%)}
+
+    /* Header */
+    .app-header{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:1rem 2rem;background:rgba(9,13,22,.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--border-card);flex-wrap:wrap;gap:1rem}
+    .logo-area{display:flex;align-items:center;gap:1rem}
+    .kafka-icon{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,var(--accent-cyan),var(--accent-purple));display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#fff;box-shadow:0 0 20px rgba(6,182,212,.4)}
+    .brand-text h1{font-size:1.3rem;font-weight:800;letter-spacing:1px}
+    .brand-text h1 span{color:var(--accent-cyan)}
+    .badge{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:20px;text-transform:uppercase}
+    .live-badge{background:rgba(16,185,129,.15);color:var(--accent-emerald);border:1px solid rgba(16,185,129,.3)}
+    .live-badge .dot{font-size:.5rem;animation:pulse 1.5s infinite}
+    @keyframes pulse{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
+    .header-status{display:flex;align-items:center;gap:2rem}
+    .status-item{display:flex;flex-direction:column}
+    .status-label{font-size:.68rem;font-weight:700;color:var(--text-muted);letter-spacing:.5px}
+    .status-value{font-size:.85rem;font-weight:600;color:var(--text-main);display:flex;align-items:center;gap:6px}
+    .status-online{color:var(--accent-cyan)}
+    .header-actions{display:flex;gap:.8rem;flex-wrap:wrap}
+
+    /* Buttons */
+    .btn{font-family:var(--font-sans);font-size:.85rem;font-weight:600;padding:.65rem 1.2rem;border-radius:10px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:all .2s ease;user-select:none}
+    .btn:active{transform:scale(.96)}
+    .btn-primary{background:linear-gradient(135deg,var(--accent-cyan),#0284c7);color:#fff;box-shadow:0 0 15px rgba(6,182,212,.3)}
+    .btn-primary:hover{transform:translateY(-2px);box-shadow:0 0 25px rgba(6,182,212,.5)}
+    .btn-secondary{background:rgba(255,255,255,.08);color:var(--text-main);border:1px solid var(--border-card)}
+    .btn-secondary:hover{background:rgba(255,255,255,.14)}
+    .btn-danger{background:rgba(239,68,68,.15);color:var(--accent-red);border:1px solid rgba(239,68,68,.3)}
+    .btn-danger:hover{background:rgba(239,68,68,.25);box-shadow:0 0 15px rgba(239,68,68,.3)}
+    .btn-outline{background:transparent;border:1px solid var(--border-card);color:var(--text-muted)}
+    .btn-outline:hover{color:var(--text-main);border-color:rgba(255,255,255,.3)}
+    .btn-xs{padding:.3rem .6rem;font-size:.75rem}
+
+    /* Dashboard */
+    .dashboard-container{position:relative;z-index:1;max-width:1600px;margin:0 auto;padding:1.5rem 2rem;display:flex;flex-direction:column;gap:1.5rem}
+
+    /* Glass Card */
+    .glass-card{background:var(--bg-card);backdrop-filter:blur(12px);border:1px solid var(--border-card);border-radius:16px;padding:1.25rem;box-shadow:0 8px 32px rgba(0,0,0,.37);transition:border-color .3s ease}
+    .glass-card:hover{border-color:rgba(255,255,255,.15)}
+
+    /* Metrics */
+    .metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.2rem}
+    .metric-card{display:flex;align-items:center;gap:1.2rem}
+    .purple-glow{border-left:4px solid var(--accent-purple)}
+    .cyan-glow{border-left:4px solid var(--accent-cyan)}
+    .yellow-glow{border-left:4px solid var(--accent-yellow)}
+    .red-glow{border-left:4px solid var(--accent-red)}
+    .card-icon{width:52px;height:52px;border-radius:14px;background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;font-size:1.5rem}
+    .purple-glow .card-icon{color:var(--accent-purple);background:rgba(168,85,247,.15)}
+    .cyan-glow .card-icon{color:var(--accent-cyan);background:rgba(6,182,212,.15)}
+    .yellow-glow .card-icon{color:var(--accent-yellow);background:rgba(245,158,11,.15)}
+    .red-glow .card-icon{color:var(--accent-red);background:rgba(239,68,68,.15)}
+    .card-info{display:flex;flex-direction:column}
+    .card-title{font-size:.72rem;font-weight:700;color:var(--text-muted);letter-spacing:.5px}
+    .card-value-group{font-size:2rem;font-weight:800;line-height:1.1;margin:4px 0}
+    .currency{font-size:1.4rem;color:var(--text-muted);margin-right:2px}
+    .card-subtext{font-size:.75rem;color:var(--text-muted)}
+
+    /* Content Grid */
+    .content-grid{display:grid;grid-template-columns:420px 1fr;gap:1.5rem}
+    @media(max-width:1100px){.content-grid{grid-template-columns:1fr}}
+    .col-left,.col-right{display:flex;flex-direction:column;gap:1.5rem}
+
+    /* Panels */
+    .panel-card{display:flex;flex-direction:column;gap:1.2rem}
+    .panel-header{display:flex;align-items:center;justify-content:space-between}
+    .panel-header h2{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:10px;color:var(--text-main)}
+    .panel-header h2 i{color:var(--accent-cyan)}
+    .tag-badge{font-size:.68rem;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,.08);color:var(--text-muted)}
+    .badge-green{background:rgba(16,185,129,.15);color:var(--accent-emerald)}
+
+    /* Controls */
+    .controls-grid{display:flex;flex-direction:column;gap:1rem}
+    .control-group{display:flex;flex-direction:column;gap:6px}
+    .control-group label{font-size:.8rem;color:var(--text-muted);display:flex;justify-content:space-between}
+    .control-group label strong{color:var(--accent-cyan)}
+    input[type="range"]{accent-color:var(--accent-cyan);width:100%;cursor:pointer}
+
+    /* Product Cards */
+    .product-stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:.8rem}
+    .product-stat-card{background:rgba(255,255,255,.03);border:1px solid var(--border-card);border-radius:10px;padding:.8rem;display:flex;flex-direction:column;align-items:center;gap:4px;transition:border-color .3s,background .3s}
+    .product-stat-card.active{border-color:var(--accent-emerald);background:rgba(16,185,129,.06)}
+    .product-name{font-size:.75rem;font-weight:700;color:var(--text-muted)}
+    .product-avg{font-size:1.1rem;font-weight:800;color:var(--accent-emerald);font-family:var(--font-mono)}
+    .product-count{font-size:.7rem;color:var(--text-muted)}
+
+    /* Architecture */
+    .architecture-diagram{display:flex;align-items:center;justify-content:space-around;padding:1rem 0;flex-wrap:wrap;gap:.5rem}
+    .arch-node{display:flex;flex-direction:column;align-items:center;gap:4px;background:rgba(255,255,255,.04);border:1px solid var(--border-card);padding:.6rem .8rem;border-radius:12px;min-width:72px}
+    .node-icon{font-size:1.2rem}
+    .node-producer{border-color:var(--accent-cyan)}.node-producer .node-icon{color:var(--accent-cyan)}
+    .node-topic{border-color:var(--accent-purple)}.node-topic .node-icon{color:var(--accent-purple)}
+    .node-consumer{border-color:var(--accent-emerald)}.node-consumer .node-icon{color:var(--accent-emerald)}
+    .node-dlq{border-color:var(--accent-red)}.node-dlq .node-icon{color:var(--accent-red)}
+    .node-title{font-size:.72rem;font-weight:700}
+    .node-sub{font-size:.62rem;color:var(--text-muted)}
+    .arch-arrow{display:flex;flex-direction:column;align-items:center;font-size:.68rem;color:var(--text-muted)}
+    .pulse-arrow{color:var(--accent-cyan);font-size:1rem;animation:moveRight 1.5s infinite linear}
+    @keyframes moveRight{0%{transform:translateX(-4px);opacity:.3}50%{opacity:1}100%{transform:translateX(4px);opacity:.3}}
+
+    /* Log Stream */
+    .flex-card{min-height:380px}
+    .log-stream{background:rgba(5,8,15,.9);border:1px solid rgba(255,255,255,.05);border-radius:12px;padding:1rem;font-family:var(--font-mono);font-size:.8rem;height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+    .log-entry{display:flex;gap:8px;align-items:flex-start;word-break:break-all;padding:2px 0;animation:fadeIn .3s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+    .log-time{color:var(--text-muted);font-size:.72rem;white-space:nowrap}
+    .log-tag{font-weight:700;white-space:nowrap}
+    .log-ok .log-tag{color:var(--accent-emerald)}
+    .log-retry .log-tag{color:var(--accent-yellow)}
+    .log-dlq .log-tag{color:var(--accent-red)}
+    .log-producer .log-tag{color:var(--accent-cyan)}
+    .log-system .log-tag{color:var(--accent-purple)}
+
+    /* DLQ Table */
+    .custom-select{background:rgba(255,255,255,.05);border:1px solid var(--border-card);color:var(--text-main);padding:.4rem .8rem;border-radius:8px;font-family:var(--font-sans);font-size:.8rem;outline:none}
+    .table-responsive{overflow-x:auto;max-height:280px}
+    .dlq-table{width:100%;border-collapse:collapse;text-align:left;font-size:.82rem}
+    .dlq-table th{padding:.8rem;background:rgba(255,255,255,.03);color:var(--text-muted);font-weight:700;border-bottom:1px solid var(--border-card);position:sticky;top:0}
+    .dlq-table td{padding:.75rem .8rem;border-bottom:1px solid rgba(255,255,255,.04)}
+    .dlq-table tr:hover{background:rgba(255,255,255,.02)}
+    .badge-err{padding:2px 6px;border-radius:4px;font-size:.7rem;font-weight:700}
+    .badge-validation{background:rgba(239,68,68,.2);color:#fca5a5}
+    .badge-deserialization{background:rgba(168,85,247,.2);color:#e9d5ff}
+    .badge-exhausted{background:rgba(245,158,11,.2);color:#fde68a}
+    .empty-row td{text-align:center;color:var(--text-muted);padding:2rem}
+
+    /* Modal */
+    .modal{display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:1000;align-items:center;justify-content:center}
+    .modal.show{display:flex}
+    .modal-content{width:90%;max-width:650px;background:#0f172a}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+    .close-btn{background:none;border:none;color:var(--text-muted);font-size:1.5rem;cursor:pointer}
+    .close-btn:hover{color:#fff}
+    .modal-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;margin-bottom:1rem;font-size:.85rem}
+    .code-box{background:#020617;border:1px solid var(--border-card);padding:.8rem;border-radius:8px;font-family:var(--font-mono);font-size:.8rem;color:#38bdf8;margin-bottom:1rem;white-space:pre-wrap;max-height:180px;overflow-y:auto}
+
+    /* Responsive */
+    @media(max-width:768px){.app-header{padding:.8rem 1rem}.header-status{display:none}.dashboard-container{padding:1rem}}
+  </style>
+</head>
+<body>
+  <div class="glow-bg"></div>
+
+  <header class="app-header">
+    <div class="logo-area">
+      <div class="kafka-icon"><i class="fa-solid fa-diagram-project"></i></div>
+      <div class="brand-text">
+        <h1>KAFKA<span>STREAM</span></h1>
+        <span class="badge live-badge"><i class="fa-solid fa-circle dot"></i> LIVE PIPELINE</span>
+      </div>
+    </div>
+    <div class="header-status">
+      <div class="status-item">
+        <span class="status-label">SCHEMA REGISTRY</span>
+        <span class="status-value status-online"><i class="fa-solid fa-shield-halved"></i> order.avsc v1.0</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">KRAFT BROKER</span>
+        <span class="status-value status-online"><i class="fa-solid fa-server"></i> localhost:9092</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">CONSUMER GROUP</span>
+        <span class="status-value"><i class="fa-solid fa-users-gear"></i> order-processor</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="toggleSimBtn" class="btn btn-secondary">
+        <i class="fa-solid fa-pause" id="simIcon"></i> <span id="simBtnText">Pause Producer</span>
+      </button>
+      <button id="sendSingleBtn" class="btn btn-primary">
+        <i class="fa-solid fa-paper-plane"></i> Produce Order
+      </button>
+      <button id="sendBadBtn" class="btn btn-danger">
+        <i class="fa-solid fa-bug"></i> Inject Bad Message
+      </button>
+    </div>
+  </header>
+
+  <main class="dashboard-container">
+    <section class="metrics-grid">
+      <div class="metric-card glass-card purple-glow">
+        <div class="card-icon"><i class="fa-solid fa-chart-line"></i></div>
+        <div class="card-info">
+          <span class="card-title">OVERALL RUNNING AVG</span>
+          <div class="card-value-group"><span class="currency">$</span><span id="metricAvg" class="counter">0.00</span></div>
+          <span class="card-subtext"><i class="fa-solid fa-check-circle"></i> Across <span id="metricN">0</span> orders</span>
+        </div>
+      </div>
+      <div class="metric-card glass-card cyan-glow">
+        <div class="card-icon"><i class="fa-solid fa-boxes-packing"></i></div>
+        <div class="card-info">
+          <span class="card-title">TOTAL PROCESSED</span>
+          <div class="card-value-group"><span id="metricTotal" class="counter">0</span></div>
+          <span class="card-subtext"><i class="fa-solid fa-bolt"></i> At-Least-Once Committed</span>
+        </div>
+      </div>
+      <div class="metric-card glass-card yellow-glow">
+        <div class="card-icon"><i class="fa-solid fa-rotate"></i></div>
+        <div class="card-info">
+          <span class="card-title">RETRIES EXECUTED</span>
+          <div class="card-value-group"><span id="metricRetries" class="counter">0</span></div>
+          <span class="card-subtext"><i class="fa-solid fa-clock-rotate-left"></i> Backoff 1s / 2s / 4s</span>
+        </div>
+      </div>
+      <div class="metric-card glass-card red-glow">
+        <div class="card-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div class="card-info">
+          <span class="card-title">DLQ MESSAGES</span>
+          <div class="card-value-group"><span id="metricDlq" class="counter">0</span></div>
+          <span class="card-subtext"><i class="fa-solid fa-shield-cat"></i> Routed to 'orders-dlq'</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="content-grid">
+      <div class="col-left">
+        <div class="glass-card panel-card">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-sliders"></i> Producer & Consumer Controls</h2>
+            <span class="tag-badge">CONFIGURABLE</span>
+          </div>
+          <div class="controls-grid">
+            <div class="control-group">
+              <label>Simulated Fail Rate: <strong id="failRateVal">30%</strong></label>
+              <input type="range" id="failRateSlider" min="0" max="100" value="30">
+            </div>
+            <div class="control-group">
+              <label>Invalid Price Rate (DLQ): <strong id="invalidRateVal">15%</strong></label>
+              <input type="range" id="invalidRateSlider" min="0" max="100" value="15">
+            </div>
+            <div class="control-group">
+              <label>Streaming Interval: <strong id="speedVal">1.5s</strong></label>
+              <input type="range" id="speedSlider" min="500" max="3000" step="100" value="1500">
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card panel-card">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-tags"></i> Per-Product Running Averages</h2>
+            <span class="tag-badge badge-green">LIVE</span>
+          </div>
+          <div id="productGrid" class="product-stats-grid"></div>
+        </div>
+
+        <div class="glass-card panel-card">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-network-wired"></i> Pipeline Architecture</h2>
+          </div>
+          <div class="architecture-diagram">
+            <div class="arch-node node-producer"><div class="node-icon"><i class="fa-solid fa-paper-plane"></i></div><div class="node-title">Producer</div><div class="node-sub">order.avsc</div></div>
+            <div class="arch-arrow"><i class="fa-solid fa-arrow-right pulse-arrow"></i><span>Avro</span></div>
+            <div class="arch-node node-topic"><div class="node-icon"><i class="fa-solid fa-database"></i></div><div class="node-title">orders</div><div class="node-sub">Topic (P:3)</div></div>
+            <div class="arch-arrow"><i class="fa-solid fa-arrow-right pulse-arrow"></i><span>Poll</span></div>
+            <div class="arch-node node-consumer"><div class="node-icon"><i class="fa-solid fa-gears"></i></div><div class="node-title">Consumer</div><div class="node-sub">Retry+Commit</div></div>
+            <div class="arch-arrow"><i class="fa-solid fa-arrow-down pulse-arrow" style="color:var(--accent-red)"></i><span>Failures</span></div>
+            <div class="arch-node node-dlq"><div class="node-icon"><i class="fa-solid fa-box-archive"></i></div><div class="node-title">orders-dlq</div><div class="node-sub">DLQ</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-right">
+        <div class="glass-card panel-card flex-card">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-terminal"></i> Live Consumer Stream</h2>
+            <button id="clearLogsBtn" class="btn btn-xs btn-outline"><i class="fa-solid fa-trash"></i> Clear</button>
+          </div>
+          <div id="logStream" class="log-stream"></div>
+        </div>
+
+        <div class="glass-card panel-card">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-boxes-stacked"></i> Dead Letter Queue Inspector</h2>
+            <select id="dlqFilter" class="custom-select">
+              <option value="ALL">All Error Types</option>
+              <option value="VALIDATION_ERROR">Validation Errors</option>
+              <option value="DESERIALIZATION_ERROR">Deserialization Errors</option>
+              <option value="RETRIES_EXHAUSTED">Retries Exhausted</option>
+            </select>
+          </div>
+          <div class="table-responsive">
+            <table class="dlq-table">
+              <thead><tr><th>Key</th><th>Error Type</th><th>Reason</th><th>Retries</th><th>Offset</th><th>Action</th></tr></thead>
+              <tbody id="dlqBody">
+                <tr class="empty-row"><td colspan="6"><i class="fa-solid fa-circle-check"></i> No DLQ messages yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="modal" class="modal">
+    <div class="modal-content glass-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-code"></i> DLQ Payload & Header Inspector</h3>
+        <button id="closeModal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-meta-grid">
+          <div><strong>Error Type:</strong> <span id="mType" class="badge"></span></div>
+          <div><strong>Key:</strong> <span id="mKey"></span></div>
+          <div><strong>Retries:</strong> <span id="mRetries"></span></div>
+          <div><strong>Timestamp:</strong> <span id="mTime"></span></div>
+        </div>
+        <label>Diagnostic Headers:</label>
+        <pre id="mHeaders" class="code-box"></pre>
+        <label>Payload (Avro Decoded):</label>
+        <pre id="mPayload" class="code-box"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // STATE
+      var running = true;
+      var timer = null;
+      var nextId = 1001;
+      var processed = 0;
+      var priceSum = 0;
+      var retryTotal = 0;
+      var offset = 0;
+      var products = ['Item1','Item2','Item3','Item4','Item5'];
+      var pStats = {};
+      products.forEach(function(p){ pStats[p] = {count:0, total:0}; });
+      var dlqList = [];
+
+      // DOM
+      var $toggleBtn = document.getElementById('toggleSimBtn');
+      var $simIcon = document.getElementById('simIcon');
+      var $simText = document.getElementById('simBtnText');
+      var $singleBtn = document.getElementById('sendSingleBtn');
+      var $badBtn = document.getElementById('sendBadBtn');
+      var $clearBtn = document.getElementById('clearLogsBtn');
+      var $failSlider = document.getElementById('failRateSlider');
+      var $failVal = document.getElementById('failRateVal');
+      var $invSlider = document.getElementById('invalidRateSlider');
+      var $invVal = document.getElementById('invalidRateVal');
+      var $speedSlider = document.getElementById('speedSlider');
+      var $speedVal = document.getElementById('speedVal');
+      var $avg = document.getElementById('metricAvg');
+      var $n = document.getElementById('metricN');
+      var $total = document.getElementById('metricTotal');
+      var $retries = document.getElementById('metricRetries');
+      var $dlqCount = document.getElementById('metricDlq');
+      var $prodGrid = document.getElementById('productGrid');
+      var $log = document.getElementById('logStream');
+      var $dlqBody = document.getElementById('dlqBody');
+      var $dlqFilter = document.getElementById('dlqFilter');
+      var $modal = document.getElementById('modal');
+      var $closeModal = document.getElementById('closeModal');
+
+      // INIT
+      renderProducts();
+      log('SYSTEM', 'Kafka consumer active on "orders" | Auto-commit: OFF | Avro schema: order.avsc');
+      log('SYSTEM', 'Producer auto-stream started. Use controls to adjust behavior.');
+      produce(); // first order immediately
+      startTimer();
+
+      // BUTTONS
+      $toggleBtn.onclick = function() {
+        running = !running;
+        updateToggleUI();
+        if (running) {
+          log('SYSTEM', 'Auto-producer resumed.');
+          produce();
+          startTimer();
+        } else {
+          stopTimer();
+          log('SYSTEM', 'Auto-producer paused.');
+        }
+      };
+
+      $singleBtn.onclick = function() {
+        produce();
+      };
+
+      $badBtn.onclick = function() {
+        injectBad();
+      };
+
+      $clearBtn.onclick = function() {
+        $log.innerHTML = '';
+        log('SYSTEM', 'Log stream cleared.');
+      };
+
+      $failSlider.oninput = function() { $failVal.textContent = this.value + '%'; };
+      $invSlider.oninput = function() { $invVal.textContent = this.value + '%'; };
+      $speedSlider.oninput = function() {
+        $speedVal.textContent = (this.value / 1000).toFixed(1) + 's';
+        if (running) { stopTimer(); startTimer(); }
+      };
+      $dlqFilter.onchange = function() { renderDlq(); };
+      $closeModal.onclick = function() { $modal.classList.remove('show'); };
+      $modal.onclick = function(e) { if (e.target === $modal) $modal.classList.remove('show'); };
+
+      function updateToggleUI() {
+        if (running) {
+          $simIcon.className = 'fa-solid fa-pause';
+          $simText.textContent = 'Pause Producer';
+          $toggleBtn.className = 'btn btn-secondary';
+        } else {
+          $simIcon.className = 'fa-solid fa-play';
+          $simText.textContent = 'Start Producer';
+          $toggleBtn.className = 'btn btn-primary';
+        }
+      }
+
+      function startTimer() {
+        stopTimer();
+        var ms = parseInt($speedSlider.value) || 1500;
+        timer = setInterval(function() {
+          if (running) produce();
+        }, ms);
+      }
+
+      function stopTimer() {
+        if (timer) { clearInterval(timer); timer = null; }
+      }
+
+      // PRODUCE
+      function produce() {
+        var invRate = (parseInt($invSlider.value) || 0) / 100;
+        var id = '' + nextId++;
+        var product = products[Math.floor(Math.random() * products.length)];
+        var price = +(Math.random() * 490 + 10).toFixed(2);
+        if (Math.random() < invRate) price = -price;
+
+        offset++;
+        var order = { orderId: id, product: product, price: price };
+
+        log('PRODUCER', 'Produced key=' + id + ' | ' + product + ' | $' + price.toFixed(2) + " -> 'orders'");
+
+        setTimeout(function() { consume(order, offset); }, 150);
+      }
+
+      function injectBad() {
+        offset++;
+        var key = 'BAD_' + (Math.floor(Math.random() * 900) + 100);
+        log('PRODUCER', 'Injected corrupted non-Avro bytes [key=' + key + "] -> 'orders'");
+        setTimeout(function() {
+          var reason = 'AvroDeserializer: corrupt schema magic byte';
+          log('DLQ', 'key=' + key + " -> 'orders-dlq' | DESERIALIZATION_ERROR | " + reason);
+          addDlq({ key: key, type: 'DESERIALIZATION_ERROR', reason: reason, retries: 0, offset: offset, payload: '<raw bytes: 0x89 0x4f 0x52 0x44>' });
+        }, 200);
+      }
+
+      // CONSUME
+      function consume(order, off) {
+        // Validation
+        if (order.price <= 0) {
+          var reason = 'Invalid price: ' + order.price;
+          log('DLQ', 'key=' + order.orderId + " -> 'orders-dlq' | VALIDATION_ERROR | " + reason);
+          addDlq({ key: order.orderId, type: 'VALIDATION_ERROR', reason: reason, retries: 0, offset: off, payload: order });
+          return;
+        }
+
+        var failRate = (parseInt($failSlider.value) || 0) / 100;
+        var attempts = 0;
+        var maxR = 3;
+
+        function attempt() {
+          if (Math.random() < failRate) {
+            attempts++;
+            retryTotal++;
+            $retries.textContent = retryTotal;
+            if (attempts <= maxR) {
+              var bk = Math.pow(2, attempts - 1);
+              log('RETRY', 'order=' + order.orderId + ' retry ' + attempts + '/' + maxR + ' in ' + bk + 's (downstream timeout)');
+              setTimeout(attempt, 350);
+            } else {
+              var reason = 'Gave up after ' + maxR + ' retries';
+              log('DLQ', 'key=' + order.orderId + " -> 'orders-dlq' | RETRIES_EXHAUSTED | " + reason);
+              addDlq({ key: order.orderId, type: 'RETRIES_EXHAUSTED', reason: reason, retries: maxR, offset: off, payload: order });
+            }
+          } else {
+            // SUCCESS
+            processed++;
+            priceSum += order.price;
+            pStats[order.product].count++;
+            pStats[order.product].total += order.price;
+            updateMetrics();
+            renderProducts();
+
+            var rNote = attempts > 0 ? ' (after ' + attempts + ' retries)' : '';
+            var oAvg = (priceSum / processed).toFixed(2);
+            var pAvg = (pStats[order.product].total / pStats[order.product].count).toFixed(2);
+            log('OK', 'order=' + order.orderId + ' ' + order.product + ' $' + order.price.toFixed(2) + rNote + ' | AVG=$' + oAvg + ' (n=' + processed + ') | ' + order.product + '=$' + pAvg);
+          }
+        }
+
+        attempt();
+      }
+
+      // UI HELPERS
+      function updateMetrics() {
+        var avg = processed > 0 ? (priceSum / processed).toFixed(2) : '0.00';
+        $avg.textContent = avg;
+        $n.textContent = processed;
+        $total.textContent = processed;
+      }
+
+      function renderProducts() {
+        $prodGrid.innerHTML = '';
+        products.forEach(function(p) {
+          var d = pStats[p];
+          var avg = d.count > 0 ? (d.total / d.count).toFixed(2) : '0.00';
+          var el = document.createElement('div');
+          el.className = 'product-stat-card' + (d.count > 0 ? ' active' : '');
+          el.innerHTML = '<span class="product-name">' + p + '</span><span class="product-avg">$' + avg + '</span><span class="product-count">' + d.count + ' orders</span>';
+          $prodGrid.appendChild(el);
+        });
+      }
+
+      function log(type, msg) {
+        var el = document.createElement('div');
+        el.className = 'log-entry log-' + type.toLowerCase();
+        var t = new Date().toLocaleTimeString();
+        el.innerHTML = '<span class="log-time">[' + t + ']</span> <span class="log-tag">[' + type + ']</span> <span class="log-msg">' + msg + '</span>';
+        $log.appendChild(el);
+        $log.scrollTop = $log.scrollHeight;
+        // Keep max 200 entries
+        while ($log.children.length > 200) $log.removeChild($log.firstChild);
+      }
+
+      function addDlq(rec) {
+        rec.timestamp = new Date().toISOString();
+        dlqList.unshift(rec);
+        $dlqCount.textContent = dlqList.length;
+        renderDlq();
+      }
+
+      function renderDlq() {
+        var filter = $dlqFilter.value;
+        var list = dlqList.filter(function(r) { return filter === 'ALL' || r.type === filter; });
+        if (list.length === 0) {
+          $dlqBody.innerHTML = '<tr class="empty-row"><td colspan="6"><i class="fa-solid fa-circle-check"></i> No DLQ messages matching filter</td></tr>';
+          return;
+        }
+        $dlqBody.innerHTML = '';
+        list.forEach(function(rec, i) {
+          var bc = rec.type === 'DESERIALIZATION_ERROR' ? 'badge-deserialization' : (rec.type === 'RETRIES_EXHAUSTED' ? 'badge-exhausted' : 'badge-validation');
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td><strong>' + rec.key + '</strong></td><td><span class="badge-err ' + bc + '">' + rec.type + '</span></td><td>' + rec.reason + '</td><td>' + rec.retries + '</td><td>#' + rec.offset + '</td><td><button class="btn btn-xs btn-outline" data-i="' + i + '"><i class="fa-solid fa-eye"></i> Inspect</button></td>';
+          $dlqBody.appendChild(tr);
+          tr.querySelector('button').onclick = function() { openModal(list[parseInt(this.getAttribute('data-i'))]); };
+        });
+      }
+
+      function openModal(rec) {
+        document.getElementById('mType').textContent = rec.type;
+        document.getElementById('mKey').textContent = rec.key;
+        document.getElementById('mRetries').textContent = rec.retries;
+        document.getElementById('mTime').textContent = rec.timestamp;
+        document.getElementById('mHeaders').textContent = JSON.stringify({
+          "dlq.error.type": rec.type,
+          "dlq.error.reason": rec.reason,
+          "dlq.original.topic": "orders",
+          "dlq.original.partition": "0",
+          "dlq.original.offset": "" + rec.offset,
+          "dlq.retry.count": "" + rec.retries,
+          "dlq.failed.at": rec.timestamp
+        }, null, 2);
+        document.getElementById('mPayload').textContent = typeof rec.payload === 'object' ? JSON.stringify(rec.payload, null, 2) : rec.payload;
+        $modal.classList.add('show');
+      }
+
+    })();
+  </script>
+</body>
+</html>
